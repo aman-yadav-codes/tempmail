@@ -135,24 +135,27 @@ app.get("/", (req, res) => {
 });
 
 // 🔄 Reset email session for a user
+app.get("/reset_email", async (req, res) => {
+  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const userId = req.query.user_id || userIp;
+  userSessions.delete(userId);
+  await initializeSession(userId);
+  const result = await getEmail(userId, true);
+  res.json(result);
+});
+
+// 📧 Get email for a user
 app.get("/get_email", async (req, res) => {
   const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   const userId = req.query.user_id || userIp;
   const result = await getEmail(userId);
-  
+
   res.json({
     real_ip: userIp,
     email: result.email,
     expires_at: result.expires_at,
     cached: result.cached,
   });
-});
-
-// 📧 Get email for a user
-app.get("/get_email", async (req, res) => {
-  const userId = req.query.user_id || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  const result = await getEmail(userId);
-  res.json(result);
 });
 
 // 📥 Get inbox for a user
@@ -168,7 +171,6 @@ app.get("/get_inbox", async (req, res) => {
     inbox: result,
   });
 });
-
 
 // 🚀 Start server
 app.listen(3000, async () => {
