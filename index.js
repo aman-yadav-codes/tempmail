@@ -7,10 +7,7 @@ const app = express();
 const HOMEPAGE_URL = "https://tempmail.so/";
 const CACHE_DURATION = 600000; // 10 minutes in milliseconds
 
-let emailAddress = null;
-let emailExpiry = 0;
-let lastEmailRequestTime = 0;
-let jar, session;
+const userSessions = new Map(); // Stores sessions per user
 
 // Headers to simulate browser request
 const headers = {
@@ -27,48 +24,80 @@ const headers = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
 };
 
-// Initialize session (called on startup and when resetting)
-async function initializeSession() {
-  jar = new CookieJar();
-  session = wrapper(axios.create({ jar }));
+// Middleware to log IP and request path
+app.use((req, res, next) => {
+  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress; // Get real user IP
+  console.log(`📌 Request from IP: ${userIp} | Path: ${req.path}`);
+  next();
+});
+
+// Initialize session for a specific user
+async function initializeSession(userId) {
+  const jar = new CookieJar();
+  const session = wrapper(axios.create({ jar }));
   await session.get(HOMEPAGE_URL); // Fetch homepage to store cookies
+
+  userSessions.set(userId, {
+    jar,
+    session,
+    emailAddress: null,
+    emailExpiry: 0,
+    lastEmailRequestTime: 0,
+  });
 }
 
-// Get a temporary email (caches email for 10 minutes unless reset)
-async function getEmail(forceNew = false) {
+// Get user session or create a new one
+async function getUserSession(userId) {
+  if (!userSessions.has(userId)) {
+    await initializeSession(userId);
+  }
+  return userSessions.get(userId);
+}
+
+// Get a temporary email for a specific user
+async function getEmail(userId, forceNew = false) {
+  const user = await getUserSession(userId);
   const currentTime = Date.now();
-  if (!forceNew && emailAddress && (currentTime - lastEmailRequestTime < CACHE_DURATION) && currentTime < emailExpiry) {
-    return { email: emailAddress, expires_at: emailExpiry, cached: true };
+
+  if (
+    !forceNew &&
+    user.emailAddress &&
+    currentTime - user.lastEmailRequestTime < CACHE_DURATION &&
+    currentTime < user.emailExpiry
+  ) {
+    return { email: user.emailAddress, expires_at: user.emailExpiry, cached: true };
   }
 
   const requestTime = Date.now();
   const apiUrl = `https://tempmail.so/us/api/inbox?requestTime=${requestTime}&lang=us`;
 
   try {
-    const response = await session.get(apiUrl, { headers });
+    const response = await user.session.get(apiUrl, { headers });
     if (response.status === 200) {
-      emailAddress = response.data.data.name;
-      emailExpiry = response.data.data.expires;
-      lastEmailRequestTime = currentTime;
-      return { email: emailAddress, expires_at: emailExpiry, cached: false };
+      user.emailAddress = response.data.data.name;
+      user.emailExpiry = response.data.data.expires;
+      user.lastEmailRequestTime = currentTime;
+      return { email: user.emailAddress, expires_at: user.emailExpiry, cached: false };
     }
   } catch (error) {
     return { error: "Failed to retrieve email address." };
   }
 }
 
-// ✅ Return full inbox instead of just one email
-async function checkInbox() {
+// Retrieve inbox for a specific user
+async function checkInbox(userId) {
+  const user = await getUserSession(userId);
   const currentTime = Date.now();
-  if (currentTime > emailExpiry) {
-    await getEmail();
+
+  if (currentTime > user.emailExpiry) {
+    await getEmail(userId);
   }
 
   const requestTime = Date.now();
   const apiUrl = `https://tempmail.so/us/api/inbox?requestTime=${requestTime}&lang=us`;
 
   try {
-    const response = await session.get(apiUrl, { headers });
+    const response = await user.session.get(apiUrl, { headers });
     if (response.status === 200) {
       const messages = response.data.data.inbox || [];
       if (messages.length > 0) {
@@ -89,42 +118,59 @@ async function checkInbox() {
   }
 }
 
+// 🏠 Home Route: Shows IP and API Info
 app.get("/", (req, res) => {
-    res.json({
-      message: "Welcome to the Temp Mail API",
-      description: "This API allows you to generate temporary emails and fetch emails received in the inbox.",
-      endpoints: {
-        "/get_email": "Get a temporary email address",
-        "/get_inbox": "Retrieve all emails in the inbox",
-        "/reset_email": "Reset and generate a new email",
-      },
-      note: "This is an unofficial API wrapper for TempMail. Use responsibly.",
-    });
+  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress; // Get real user IP
+  res.json({
+    real_ip: userIp,
+    message: "Welcome to the Temp Mail API",
+    description: "This API allows you to generate temporary emails and fetch emails received in the inbox.",
+    endpoints: {
+      "/get_email?user_id=YOUR_ID": "Get a temporary email address",
+      "/get_inbox?user_id=YOUR_ID": "Retrieve all emails in the inbox",
+      "/reset_email?user_id=YOUR_ID": "Reset and generate a new email",
+    },
+    note: "This is an unofficial API wrapper for TempMail. Use responsibly.",
   });
-
-// Reset email session and generate a new email
-app.get("/reset_email", async (req, res) => {
-  emailAddress = null;
-  emailExpiry = 0;
-  lastEmailRequestTime = 0;
-  await initializeSession(); // Reinitialize session and cookies
-  const result = await getEmail(true);
-  res.json(result);
 });
 
-// API endpoints
+// 🔄 Reset email session for a user
 app.get("/get_email", async (req, res) => {
-  const result = await getEmail();
+  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const userId = req.query.user_id || userIp;
+  const result = await getEmail(userId);
+  
+  res.json({
+    real_ip: userIp,
+    email: result.email,
+    expires_at: result.expires_at,
+    cached: result.cached,
+  });
+});
+
+// 📧 Get email for a user
+app.get("/get_email", async (req, res) => {
+  const userId = req.query.user_id || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const result = await getEmail(userId);
   res.json(result);
 });
 
+// 📥 Get inbox for a user
 app.get("/get_inbox", async (req, res) => {
-  const result = await checkInbox();
-  res.json(result);
+  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const userId = req.query.user_id || userIp;
+  const user = await getUserSession(userId);
+  const result = await checkInbox(userId);
+
+  res.json({
+    real_ip: userIp,
+    email: user.emailAddress || "No email assigned yet",
+    inbox: result,
+  });
 });
 
-// Start the server
+
+// 🚀 Start server
 app.listen(3000, async () => {
-  await initializeSession();
-  console.log("Server running on http://localhost:3000");
+  console.log("🚀 Server running on http://localhost:3000");
 });
