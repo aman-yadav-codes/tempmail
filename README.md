@@ -21,7 +21,7 @@ TempMail API provides a **fast, lightweight, and anonymous** way to generate tem
 ---
 
 🚀 **Experience hassle-free disposable emails with TempMail API today!**  
-🔗 **[Try it Now](https://tempmail-service.vercel.app/get_email)**  
+🔗 **[Try it Now](https://onesecmail.vercel.app/)**  
 
 
 
@@ -29,13 +29,13 @@ TempMail API provides a **fast, lightweight, and anonymous** way to generate tem
 ---
 
 ## 🔹 Endpoints & Usage  
-🚀 **Base URL**: [`https://tempmail-service.vercel.app/`](https://tempmail-service.vercel.app/)  
+🚀 **Base URL**: [`https://onesecmail.vercel.app/`](https://onesecmail.vercel.app/)  
 
 > ⚠️ **Note:** Generated temporary emails will automatically expire **🕒10 minutes** after creation.
 
 ### 1️⃣ Get a Temporary Email  
 📌 **GET** `/get_email`  
-🔗 [Try it](https://tempmail-service.vercel.app/get_email)  
+🔗 [Try it](https://onesecmail.vercel.app/get_email)  
 
 📥 **Response:**  
 ```json
@@ -48,7 +48,7 @@ TempMail API provides a **fast, lightweight, and anonymous** way to generate tem
 ```
 ### 2️⃣ Reset and Get a New Email
 📌 **GET** `/reset_email`  
-🔗 [Try it](https://tempmail-service.vercel.app/reset_email)  
+🔗 [Try it](https://onesecmail.vercel.app/reset_email)  
 
 📥 **Response:**  
 ```json
@@ -62,7 +62,7 @@ TempMail API provides a **fast, lightweight, and anonymous** way to generate tem
 ```
 ### 3️⃣ Get Inbox Messages
 📌 **GET** `/get_inbox`  
-🔗 [Try it](https://tempmail-service.vercel.app/get_inbox)  
+🔗 [Try it](https://onesecmail.vercel.app/get_inbox)  
 
 📥 **Response:**  
 ```json
