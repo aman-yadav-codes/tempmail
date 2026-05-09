@@ -1,7 +1,10 @@
 {
+<<<<<<< HEAD
   "scripts": {
     "start": "node index.js"
   },
+=======
+>>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
   "dependencies": {
     "axios": "^1.8.4",
     "axios-cookiejar-support": "^5.0.5",
