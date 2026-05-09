@@ -2,15 +2,10 @@ const express = require("express");
 const axios = require("axios");
 const { CookieJar } = require("tough-cookie");
 const { wrapper } = require("axios-cookiejar-support");
-<<<<<<< HEAD
 const crypto = require("crypto");
 
 const app = express();
 app.set("trust proxy", true);
-=======
-
-const app = express();
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
 const HOMEPAGE_URL = "https://tempmail.so/";
 const CACHE_DURATION = 600000; // 10 minutes in milliseconds
 
@@ -33,16 +28,11 @@ const headers = {
 
 // Middleware to log IP and request path
 app.use((req, res, next) => {
-<<<<<<< HEAD
   const userIp = req.headers["x-forwarded-for"] || req.socket?.remoteAddress; // Get real user IP
-=======
-  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress; // Get real user IP
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
   console.log(`📌 Request from IP: ${userIp} | Path: ${req.path}`);
   next();
 });
 
-<<<<<<< HEAD
 // Proof-of-work algorithm for tempmail.so API
 function computePow(nonce) {
   if (!nonce) return 0;
@@ -59,13 +49,10 @@ function computePow(nonce) {
   }
 }
 
-=======
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
 // Initialize session for a specific user
 async function initializeSession(userId) {
   const jar = new CookieJar();
   const session = wrapper(axios.create({ jar }));
-<<<<<<< HEAD
   const response = await session.get(HOMEPAGE_URL, { headers }); // Fetch homepage to store cookies
 
   let sessionId = null;
@@ -73,17 +60,11 @@ async function initializeSession(userId) {
   if (match) {
     sessionId = match[1];
   }
-=======
-  await session.get(HOMEPAGE_URL); // Fetch homepage to store cookies
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
 
   userSessions.set(userId, {
     jar,
     session,
-<<<<<<< HEAD
     sessionId,
-=======
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
     emailAddress: null,
     emailExpiry: 0,
     lastEmailRequestTime: 0,
@@ -113,7 +94,6 @@ async function getEmail(userId, forceNew = false) {
   }
 
   const requestTime = Date.now();
-<<<<<<< HEAD
   const powValue = computePow(user.sessionId);
   const apiUrl = `https://tempmail.so/us/api/inbox?requestTime=${requestTime}&x=${powValue}&lang=us`;
 
@@ -121,12 +101,6 @@ async function getEmail(userId, forceNew = false) {
     const response = await user.session.get(apiUrl, {
       headers: { ...headers, "x-inbox-lifespan": "600" }
     });
-=======
-  const apiUrl = `https://tempmail.so/us/api/inbox?requestTime=${requestTime}&lang=us`;
-
-  try {
-    const response = await user.session.get(apiUrl, { headers });
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
     if (response.status === 200) {
       user.emailAddress = response.data.data.name;
       user.emailExpiry = response.data.data.expires;
@@ -148,7 +122,6 @@ async function checkInbox(userId) {
   }
 
   const requestTime = Date.now();
-<<<<<<< HEAD
   const powValue = computePow(user.sessionId);
   const apiUrl = `https://tempmail.so/us/api/inbox?requestTime=${requestTime}&x=${powValue}&lang=us`;
 
@@ -156,12 +129,6 @@ async function checkInbox(userId) {
     const response = await user.session.get(apiUrl, {
       headers: { ...headers, "x-inbox-lifespan": "600" }
     });
-=======
-  const apiUrl = `https://tempmail.so/us/api/inbox?requestTime=${requestTime}&lang=us`;
-
-  try {
-    const response = await user.session.get(apiUrl, { headers });
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
     if (response.status === 200) {
       const messages = response.data.data.inbox || [];
       if (messages.length > 0) {
@@ -184,26 +151,16 @@ async function checkInbox(userId) {
 
 // 🏠 Home Route: Shows IP and API Info
 app.get("/", (req, res) => {
-<<<<<<< HEAD
   const userIp = req.headers["x-forwarded-for"] || req.socket?.remoteAddress; // Get real user IP
   const baseUrl = `${req.protocol}://${req.get("host")}`;
-=======
-  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress; // Get real user IP
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
   res.json({
     real_ip: userIp,
     message: "Welcome to the Temp Mail API",
     description: "This API allows you to generate temporary emails and fetch emails received in the inbox.",
     endpoints: {
-<<<<<<< HEAD
-      [`${baseUrl}/get_email`]: "Get a temporary email address",
-      [`${baseUrl}/get_inbox`]: "Retrieve all emails in the inbox",
-      [`${baseUrl}/reset_email`]: "Reset and generate a new email",
-=======
-      "/get_email?user_id=YOUR_ID": "Get a temporary email address",
-      "/get_inbox?user_id=YOUR_ID": "Retrieve all emails in the inbox",
-      "/reset_email?user_id=YOUR_ID": "Reset and generate a new email",
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
+      [`${baseUrl}/get_email?user_id=YOUR_ID`]: "Get a temporary email address",
+      [`${baseUrl}/get_inbox?user_id=YOUR_ID`]: "Retrieve all emails in the inbox",
+      [`${baseUrl}/reset_email?user_id=YOUR_ID`]: "Reset and generate a new email",
     },
     note: "This is an unofficial API wrapper for TempMail. Use responsibly.",
   });
@@ -211,7 +168,6 @@ app.get("/", (req, res) => {
 
 // 🔄 Reset email session for a user
 app.get("/reset_email", async (req, res) => {
-<<<<<<< HEAD
   try {
     const userIp = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
     const userId = req.query.user_id || userIp;
@@ -223,19 +179,10 @@ app.get("/reset_email", async (req, res) => {
     console.error("Error in /reset_email:", error.message);
     res.status(500).json({ error: "Failed to reset email session." });
   }
-=======
-  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  const userId = req.query.user_id || userIp;
-  userSessions.delete(userId);
-  await initializeSession(userId);
-  const result = await getEmail(userId, true);
-  res.json(result);
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
 });
 
 // 📧 Get email for a user
 app.get("/get_email", async (req, res) => {
-<<<<<<< HEAD
   try {
     const userIp = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
     const userId = req.query.user_id || userIp;
@@ -251,23 +198,10 @@ app.get("/get_email", async (req, res) => {
     console.error("Error in /get_email:", error.message);
     res.status(500).json({ error: "Failed to get email." });
   }
-=======
-  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  const userId = req.query.user_id || userIp;
-  const result = await getEmail(userId);
-
-  res.json({
-    real_ip: userIp,
-    email: result.email,
-    expires_at: result.expires_at,
-    cached: result.cached,
-  });
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
 });
 
 // 📥 Get inbox for a user
 app.get("/get_inbox", async (req, res) => {
-<<<<<<< HEAD
   try {
     const userIp = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
     const userId = req.query.user_id || userIp;
@@ -293,21 +227,3 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 module.exports = app;
-=======
-  const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  const userId = req.query.user_id || userIp;
-  const user = await getUserSession(userId);
-  const result = await checkInbox(userId);
-
-  res.json({
-    real_ip: userIp,
-    email: user.emailAddress || "No email assigned yet",
-    inbox: result,
-  });
-});
-
-// 🚀 Start server
-app.listen(3000, async () => {
-  console.log("🚀 Server running on http://localhost:3000");
-});
->>>>>>> 49c92bab0430daa7531b77d557f02497969d4e2d
