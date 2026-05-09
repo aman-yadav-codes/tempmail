@@ -3,6 +3,7 @@ const axios = require("axios");
 const { CookieJar } = require("tough-cookie");
 const { wrapper } = require("axios-cookiejar-support");
 const crypto = require("crypto");
+const https = require("https");
 
 const app = express();
 app.set("trust proxy", true);
@@ -13,12 +14,15 @@ const userSessions = new Map(); // Stores sessions per user
 
 // Headers to simulate browser request
 const headers = {
-  "authority": "tempmail.so",
   "accept": "application/json",
   "accept-language": "en-US,en;q=0.9",
   "content-type": "application/json",
   "dnt": "1",
+  "origin": "https://tempmail.so",
   "referer": "https://tempmail.so/",
+  "sec-ch-ua": "\"Chromium\";v=\"134\", \"Not:A-Brand\";v=\"24\", \"Google Chrome\";v=\"134\"",
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": "\"Windows\"",
   "sec-fetch-dest": "empty",
   "sec-fetch-mode": "cors",
   "sec-fetch-site": "same-origin",
@@ -52,7 +56,14 @@ function computePow(nonce) {
 // Initialize session for a specific user
 async function initializeSession(userId) {
   const jar = new CookieJar();
-  const session = wrapper(axios.create({ jar }));
+  const agent = new https.Agent({
+    ciphers: "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:DHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA",
+    honorCipherOrder: true,
+    minVersion: "TLSv1.2",
+    maxVersion: "TLSv1.3",
+    secureOptions: crypto.constants.SSL_OP_NO_SSLv3 | crypto.constants.SSL_OP_NO_TLSv1 | crypto.constants.SSL_OP_NO_TLSv1_1,
+  });
+  const session = wrapper(axios.create({ jar, httpsAgent: agent }));
   const response = await session.get(HOMEPAGE_URL, { headers }); // Fetch homepage to store cookies
 
   let sessionId = null;
