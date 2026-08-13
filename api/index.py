@@ -1,199 +1,186 @@
-import os
-import time
-import hashlib
 import re
-from flask import Flask, request, jsonify
+import time
+import uuid
+from urllib.parse import urlencode
+
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.ssl_ import create_urllib3_context
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-HOMEPAGE_URL = "https://tempmail.so/"
-CACHE_DURATION_SEC = 600 # 10 minutes
+ONESECMAIL_API = "https://www.1secmail.com/api/v1/"
+MAILBOX_TTL_SECONDS = 600
+REQUEST_TIMEOUT_SECONDS = 10
 
+# Best-effort warm-instance cache. The mailbox itself lives at the upstream
+# service, so the API remains usable after a Vercel cold start.
 user_sessions = {}
 
-HEADERS = {
-    "accept": "application/json",
-    "accept-language": "en-US,en;q=0.9",
-    "content-type": "application/json",
-    "dnt": "1",
-    "origin": "https://tempmail.so",
-    "referer": "https://tempmail.so/",
-    "sec-ch-ua": "\"Chromium\";v=\"134\", \"Not:A-Brand\";v=\"24\", \"Google Chrome\";v=\"134\"",
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": "\"Windows\"",
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-origin",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-}
-
-class CipherAdapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        context = create_urllib3_context()
-        context.set_ciphers("TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:DHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA")
-        kwargs['ssl_context'] = context
-        return super(CipherAdapter, self).init_poolmanager(*args, **kwargs)
 
 def get_client_ip():
-    if request.headers.get('x-forwarded-for'):
-        return request.headers.get('x-forwarded-for').split(',')[0]
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
     return request.remote_addr
 
-@app.before_request
-def log_request_info():
-    print(f"Request from IP: {get_client_ip()} | Path: {request.path}")
 
-def compute_pow(nonce):
-    if not nonce: return 0
-    time_span = int(time.time() * 1000) // 300000
-    user_agent = HEADERS["user-agent"]
-    t = 0
-    while True:
-        data = f"{nonce}:{t}:{time_span}:{user_agent}"
-        hash_val = hashlib.sha256(data.encode('utf-8')).hexdigest()
-        if hash_val.startswith("ff"):
-            return t
-        t += 1
+def upstream_get(params):
+    response = requests.get(
+        ONESECMAIL_API,
+        params=params,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        headers={"accept": "application/json", "user-agent": "TempMailAPI/2.0"},
+    )
+    response.raise_for_status()
+    return response.json()
 
-def create_session():
-    session = requests.Session()
-    session.mount('https://', CipherAdapter())
-    return session
 
-def initialize_session(user_id):
-    session = create_session()
-    response = session.get(HOMEPAGE_URL, headers=HEADERS)
-    
-    session_id = None
-    match = re.search(r'<meta\s+name="x-session-id"\s+content="([^"]+)"', response.text)
-    if match:
-        session_id = match.group(1)
-        
-    user_sessions[user_id] = {
-        "session": session,
-        "session_id": session_id,
-        "email_address": None,
-        "email_expiry": 0,
-        "last_email_request_time": 0,
-    }
+def generate_mailbox():
+    data = upstream_get({"action": "genRandomMailbox", "count": 1})
+    if not isinstance(data, list) or not data or "@" not in data[0]:
+        raise RuntimeError("Upstream returned an invalid mailbox response")
+    return data[0]
 
-def get_user_session(user_id):
-    if user_id not in user_sessions:
-        initialize_session(user_id)
+
+def get_user_session(user_id, force_new=False):
+    if force_new or user_id not in user_sessions:
+        email = generate_mailbox()
+        user_sessions[user_id] = {
+            "email": email,
+            "created_at": time.time(),
+        }
     return user_sessions[user_id]
 
-def get_email(user_id, force_new=False):
-    user = get_user_session(user_id)
-    current_time = time.time() * 1000
-    
-    if (not force_new and 
-        user["email_address"] and 
-        current_time - user["last_email_request_time"] < CACHE_DURATION_SEC * 1000 and 
-        current_time < user["email_expiry"]):
-        return {"email": user["email_address"], "expires_at": user["email_expiry"], "cached": True}
-        
-    request_time = int(time.time() * 1000)
-    pow_value = compute_pow(user["session_id"])
-    api_url = f"https://tempmail.so/us/api/inbox?requestTime={request_time}&x={pow_value}&lang=us"
-    
-    req_headers = HEADERS.copy()
-    req_headers["x-inbox-lifespan"] = "600"
-    
-    try:
-        response = user["session"].get(api_url, headers=req_headers)
-        if response.status_code == 200:
-            data = response.json().get("data", {})
-            user["email_address"] = data.get("name")
-            user["email_expiry"] = data.get("expires")
-            user["last_email_request_time"] = current_time
-            return {"email": user["email_address"], "expires_at": user["email_expiry"], "cached": False}
-    except Exception as e:
-        pass
-        
-    return {"error": "Failed to retrieve email address."}
 
-def check_inbox(user_id):
-    user = get_user_session(user_id)
-    current_time = time.time() * 1000
-    
-    if current_time > user["email_expiry"]:
-        get_email(user_id)
-        
-    request_time = int(time.time() * 1000)
-    pow_value = compute_pow(user["session_id"])
-    api_url = f"https://tempmail.so/us/api/inbox?requestTime={request_time}&x={pow_value}&lang=us"
-    
-    req_headers = HEADERS.copy()
-    req_headers["x-inbox-lifespan"] = "600"
-    
-    try:
-        response = user["session"].get(api_url, headers=req_headers)
-        if response.status_code == 200:
-            messages = response.json().get("data", {}).get("inbox", [])
-            if len(messages) > 0:
-                parsed_messages = []
-                for email in messages:
-                    subject = email.get("subject", "")
-                    otp_match = re.search(r'\b\d{6}\b', subject)
-                    parsed_messages.append({
-                        "from": email.get("from", ""),
-                        "subject": subject,
-                        "otp": otp_match.group(0) if otp_match else "Not Found",
-                        "body": email.get("textBody", "")
-                    })
-                return parsed_messages
-            return {"message": "No new emails yet."}
-    except Exception as e:
-        pass
-        
-    return {"error": "Failed to check inbox."}
+def split_email(email):
+    login, domain = email.rsplit("@", 1)
+    if not login or not domain:
+        raise ValueError("Invalid mailbox address")
+    return login, domain
 
-@app.route('/', methods=['GET'])
-def home():
-    user_ip = get_client_ip()
-    base_url = request.host_url.rstrip('/')
-    return jsonify({
-        "real_ip": user_ip,
-        "message": "Welcome to the Temp Mail API (Python Edition)",
-        "endpoints": {
-            f"{base_url}/get_email?user_id=YOUR_ID": "Get a temporary email address",
-            f"{base_url}/get_inbox?user_id=YOUR_ID": "Retrieve all emails in the inbox",
-            f"{base_url}/reset_email?user_id=YOUR_ID": "Reset and generate a new email",
+
+def get_messages(email):
+    login, domain = split_email(email)
+    return upstream_get(
+        {"action": "getMessages", "login": login, "domain": domain}
+    )
+
+
+def read_message(email, message_id):
+    login, domain = split_email(email)
+    return upstream_get(
+        {
+            "action": "readMessage",
+            "login": login,
+            "domain": domain,
+            "id": message_id,
         }
-    })
+    )
 
-@app.route('/reset_email', methods=['GET'])
-def reset_email_route():
-    user_id = request.args.get('user_id') or get_client_ip()
-    if user_id in user_sessions:
-        del user_sessions[user_id]
-    result = get_email(user_id, force_new=True)
-    return jsonify(result)
 
-@app.route('/get_email', methods=['GET'])
+def message_to_public(message):
+    subject = message.get("subject", "")
+    otp_match = re.search(r"\b\d{6}\b", subject)
+    return {
+        "id": message.get("id"),
+        "from": message.get("from", ""),
+        "subject": subject,
+        "otp": otp_match.group(0) if otp_match else "Not Found",
+        "body": message.get("textBody", "") or message.get("body", ""),
+        "date": message.get("date") or message.get("timestamp"),
+    }
+
+
+@app.route("/", methods=["GET"])
+def home():
+    base_url = request.host_url.rstrip("/")
+    return jsonify(
+        {
+            "status": "ok",
+            "message": "Welcome to the Temp Mail API (Python Edition)",
+            "endpoints": {
+                f"{base_url}/get_email?user_id=YOUR_ID": "Get a temporary email address",
+                f"{base_url}/get_inbox?user_id=YOUR_ID": "Retrieve all emails in the inbox",
+                f"{base_url}/reset_email?user_id=YOUR_ID": "Reset and generate a new email",
+            },
+        }
+    )
+
+
+@app.route("/get_email", methods=["GET"])
 def get_email_route():
-    user_id = request.args.get('user_id') or get_client_ip()
-    result = get_email(user_id)
-    return jsonify({
-        "real_ip": get_client_ip(),
-        "email": result.get("email"),
-        "expires_at": result.get("expires_at"),
-        "cached": result.get("cached")
-    })
+    user_id = request.args.get("user_id") or get_client_ip() or str(uuid.uuid4())
+    try:
+        session = get_user_session(user_id)
+        expires_at = int((session["created_at"] + MAILBOX_TTL_SECONDS) * 1000)
+        return jsonify(
+            {
+                "real_ip": get_client_ip(),
+                "email": session["email"],
+                "expires_at": expires_at,
+                "cached": session["created_at"] + MAILBOX_TTL_SECONDS > time.time(),
+            }
+        )
+    except Exception as exc:
+        app.logger.exception("get_email failed")
+        return jsonify({"error": "Failed to retrieve email address", "details": str(exc)}), 502
 
-@app.route('/get_inbox', methods=['GET'])
+
+@app.route("/reset_email", methods=["GET"])
+def reset_email_route():
+    user_id = request.args.get("user_id") or get_client_ip() or str(uuid.uuid4())
+    try:
+        session = get_user_session(user_id, force_new=True)
+        expires_at = int((session["created_at"] + MAILBOX_TTL_SECONDS) * 1000)
+        return jsonify(
+            {
+                "email": session["email"],
+                "expires_at": expires_at,
+                "cached": False,
+            }
+        )
+    except Exception as exc:
+        app.logger.exception("reset_email failed")
+        return jsonify({"error": "Failed to generate new email", "details": str(exc)}), 502
+
+
+@app.route("/get_inbox", methods=["GET"])
 def get_inbox_route():
-    user_id = request.args.get('user_id') or get_client_ip()
-    user = get_user_session(user_id)
-    result = check_inbox(user_id)
-    return jsonify({
-        "real_ip": get_client_ip(),
-        "email": user.get("email_address", "No email assigned yet"),
-        "inbox": result
-    })
+    user_id = request.args.get("user_id") or get_client_ip() or str(uuid.uuid4())
+    try:
+        session = get_user_session(user_id)
+        messages = get_messages(session["email"])
+        if not isinstance(messages, list):
+            messages = []
 
-if __name__ == '__main__':
-    app.run(debug=True, port=3000)
+        parsed = []
+        for message in messages:
+            public_message = message_to_public(message)
+            # Fetch full content only when the list endpoint did not include it.
+            if not public_message["body"] and public_message["id"] is not None:
+                try:
+                    full = read_message(session["email"], public_message["id"])
+                    public_message["body"] = full.get("textBody", "") or full.get("body", "")
+                except Exception:
+                    app.logger.exception("Failed to read message %s", public_message["id"])
+            parsed.append(public_message)
+
+        return jsonify(
+            {
+                "real_ip": get_client_ip(),
+                "email": session["email"],
+                "inbox": parsed if parsed else {"message": "No new emails yet."},
+            }
+        )
+    except Exception as exc:
+        app.logger.exception("get_inbox failed")
+        return jsonify({"error": "Failed to check inbox", "details": str(exc)}), 502
+
+
+@app.get("/health")
+def health():
+    return jsonify({"status": "ok", "service": "tempmail-api", "upstream": "1secmail"})
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
